@@ -67,6 +67,10 @@ COULEUR_EMBED = 0x5865F2
 LARGEUR_NOM = 18          # nb max de caractères affichés pour un nom d'équipe
 MAX_LIGNES_TABLEAU = 60   # au-delà, le tableau est tronqué (sécurité anti-dépassement)
 
+# Fichier où l'on mémorise l'identifiant du message Discord à mettre à jour.
+# Il est enregistré dans le dépôt par le workflow, pour persister entre exécutions.
+CHEMIN_ETAT = "etat.json"
+
 # Réessais en cas d'erreur serveur passagère.
 NB_ESSAIS = 4
 PAUSE_ENTRE_ESSAIS_S = 6
@@ -321,17 +325,89 @@ def construire_embed(tournoi, classement):
     return embed
 
 
-def publier_sur_discord(webhook_url, embed):
-    """Envoie l'embed sur le salon Discord via la webhook."""
-    payload = {"embeds": [embed]}
+def _lire_message_id(chemin):
+    """Lit l'identifiant du message Discord mémorisé, ou None s'il n'existe pas."""
     try:
-        reponse = requests.post(webhook_url, json=payload, timeout=30)
+        with open(chemin, encoding="utf-8") as fichier:
+            return (json.load(fichier) or {}).get("message_id")
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+
+
+def _ecrire_message_id(chemin, message_id):
+    """Mémorise l'identifiant du message Discord dans le fichier d'état."""
+    try:
+        with open(chemin, "w", encoding="utf-8") as fichier:
+            json.dump({"message_id": message_id}, fichier)
+    except OSError as exc:
+        print(f"AVERTISSEMENT : impossible d'écrire {chemin} ({exc}).", file=sys.stderr)
+
+
+def publier_ou_mettre_a_jour(webhook_url, embed, chemin_etat=CHEMIN_ETAT):
+    """Met à jour le message Discord existant, ou en crée un et mémorise son id.
+
+    Au premier passage (aucun identifiant connu), un message est créé et son
+    identifiant est enregistré dans le fichier d'état. Aux passages suivants, ce
+    même message est modifié sur place. Si le message a été supprimé entre-temps,
+    un nouveau est recréé automatiquement.
+
+    Parameters
+    ----------
+    webhook_url : str
+        URL de la webhook Discord.
+    embed : dict
+        Objet embed à publier.
+    chemin_etat : str
+        Chemin du fichier mémorisant l'identifiant du message.
+    """
+    payload = {"embeds": [embed]}
+    message_id = _lire_message_id(chemin_etat)
+
+    # 1) Tentative de modification du message existant.
+    if message_id:
+        url_edition = f"{webhook_url}/messages/{message_id}"
+        try:
+            reponse = requests.patch(url_edition, json=payload, timeout=30)
+        except requests.RequestException as exc:
+            print(f"ERREUR réseau (édition Discord) : {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        if reponse.status_code == 404:
+            print(
+                "Message précédent introuvable (supprimé ?). Création d'un nouveau.",
+                file=sys.stderr,
+            )
+            message_id = None  # on bascule sur la création ci-dessous
+        else:
+            try:
+                reponse.raise_for_status()
+            except requests.HTTPError as exc:
+                print(f"ERREUR lors de l'édition Discord : {exc}", file=sys.stderr)
+                sys.exit(1)
+            print("Classement mis à jour (message existant modifié).")
+            return
+
+    # 2) Aucun message à modifier : on en crée un et on mémorise son identifiant.
+    #    Le paramètre wait=true demande à Discord de renvoyer le message créé.
+    separateur = "&" if "?" in webhook_url else "?"
+    url_creation = f"{webhook_url}{separateur}wait=true"
+    try:
+        reponse = requests.post(url_creation, json=payload, timeout=30)
         reponse.raise_for_status()
     except requests.RequestException as exc:
-        print(f"ERREUR lors de la publication sur Discord : {exc}", file=sys.stderr)
+        print(f"ERREUR lors de la publication Discord : {exc}", file=sys.stderr)
         sys.exit(1)
 
-    print("Classement publié sur Discord avec succès.")
+    nouveau_id = (reponse.json() or {}).get("id")
+    if nouveau_id:
+        _ecrire_message_id(chemin_etat, nouveau_id)
+        print(f"Classement publié : message {nouveau_id} créé et mémorisé.")
+    else:
+        print(
+            "Classement publié, mais l'identifiant du message n'a pas pu être lu "
+            "(la mise à jour sur place ne fonctionnera pas).",
+            file=sys.stderr,
+        )
 
 
 def main():
@@ -340,7 +416,7 @@ def main():
     tournoi = recuperer_tournoi(slug, username, api_key)
     classement = construire_classement(tournoi)
     embed = construire_embed(tournoi, classement)
-    publier_sur_discord(webhook, embed)
+    publier_ou_mettre_a_jour(webhook, embed)
 
 
 if __name__ == "__main__":
