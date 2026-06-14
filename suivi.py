@@ -49,6 +49,17 @@ import requests
 
 CHALLONGE_API_BASE = "https://api.challonge.com/v1"
 
+# Certaines protections (Cloudflare) rejettent les requêtes dont le client n'est
+# pas reconnu comme un navigateur. On se présente donc comme un navigateur
+# standard pour éviter une erreur serveur 520.
+ENTETES_HTTP = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+}
+
 # Couleur de la barre latérale de l'embed (bleu Discord), au format entier décimal.
 COULEUR_EMBED = 0x5865F2
 
@@ -137,7 +148,11 @@ def recuperer_tournoi(slug, username, api_key):
     for essai in range(1, NB_ESSAIS + 1):
         try:
             reponse = requests.get(
-                url, params=params, auth=(username, api_key), timeout=30
+                url,
+                params=params,
+                auth=(username, api_key),
+                headers=ENTETES_HTTP,
+                timeout=30,
             )
         except requests.RequestException as exc:
             derniere_cause = f"erreur réseau ({exc})"
