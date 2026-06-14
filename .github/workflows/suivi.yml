@@ -35,5 +35,5 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           # Le slug du tournoi n'est pas une donnée sensible : on le met ici.
           # Pour https://challonge.com/fr/SquadronS16D2  ->  SquadronS16D2
-          TOURNAMENT_SLUG: SquadronS16D2
+          TOURNAMENT_SLUG: SquadronS17D3
         run: python suivi.py
