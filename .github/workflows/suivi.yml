@@ -15,6 +15,9 @@ on:
 jobs:
   publier:
     runs-on: ubuntu-latest
+    # Autorise le workflow à enregistrer l'identifiant du message dans le dépôt.
+    permissions:
+      contents: write
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v4
@@ -35,5 +38,20 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           # Le slug du tournoi n'est pas une donnée sensible : on le met ici.
           # Pour https://challonge.com/fr/SquadronS16D2  ->  SquadronS16D2
-          TOURNAMENT_SLUG: SquadronS17D3
+          # (Valeur déduite de votre dernière modification ; à vérifier.)
+          TOURNAMENT_SLUG: SquadronS17d3
         run: python suivi.py
+
+      - name: Mémoriser l'identifiant du message Discord
+        # N'effectue un enregistrement que si l'identifiant a changé (1er passage
+        # ou message recréé). La plupart du temps, il n'y a rien à enregistrer.
+        run: |
+          if [ -n "$(git status --porcelain etat.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add etat.json
+            git commit -m "Memorisation du message Discord"
+            git push
+          else
+            echo "Aucun changement d'etat a enregistrer."
+          fi
