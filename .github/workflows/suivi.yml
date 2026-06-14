@@ -30,6 +30,7 @@ jobs:
       - name: Publier le classement
         env:
           # Ces valeurs proviennent des « secrets » du dépôt (voir le README).
+          CHALLONGE_USERNAME: ${{ secrets.CHALLONGE_USERNAME }}
           CHALLONGE_API_KEY: ${{ secrets.CHALLONGE_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           # Le slug du tournoi n'est pas une donnée sensible : on le met ici.
