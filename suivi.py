@@ -325,6 +325,101 @@ def construire_embed(tournoi, classement):
     return embed
 
 
+MAX_EQUIPES_MATRICE = 20  # au-delà, la matrice devient trop large à afficher
+
+
+def construire_matrice_texte(tournoi, classement):
+    """Construit le tableau texte des confrontations directes (qui a battu qui).
+
+    Les équipes sont numérotées selon l'ordre du classement. Chaque cellule
+    « ligne / colonne » donne le nombre de victoires de l'équipe-ligne contre
+    l'équipe-colonne. La diagonale vaut « · » ; une paire pas encore jouée
+    vaut « - » (distinct de « 0 », qui signifie joué et perdu).
+
+    Parameters
+    ----------
+    tournoi : dict
+        Dictionnaire 'tournament' renvoyé par l'API.
+    classement : list[dict]
+        Sortie de construire_classement() (définit l'ordre et la numérotation).
+
+    Returns
+    -------
+    str | None
+        Le tableau formaté, ou None s'il n'y a pas d'équipes. Si le tournoi
+        compte trop d'équipes, renvoie un court message à la place du tableau.
+    """
+    nom_par_pid = {}
+    canon = {}
+    for item in tournoi.get("participants", []):
+        p = item.get("participant", item)
+        pid = p.get("id")
+        if pid is None:
+            continue
+        nom = p.get("name") or p.get("display_name") or f"Participant {pid}"
+        nom_par_pid[pid] = nom.strip() if isinstance(nom, str) else str(nom)
+        canon[pid] = pid
+        for gpid in (p.get("group_player_ids") or []):
+            canon[gpid] = pid
+
+    victoires_paire = defaultdict(int)  # (a, b) -> victoires de a sur b
+    for item in tournoi.get("matches", []):
+        m = item.get("match", item)
+        if m.get("state") != "complete":
+            continue
+        gagnant = canon.get(m.get("winner_id"))
+        perdant = canon.get(m.get("loser_id"))
+        if gagnant is not None and perdant is not None:
+            victoires_paire[(gagnant, perdant)] += 1
+
+    nom_vers_pid = {nom: pid for pid, nom in nom_par_pid.items()}
+    ordre = [nom_vers_pid[e["nom"]] for e in classement if e["nom"] in nom_vers_pid]
+    n = len(ordre)
+    if n == 0:
+        return None
+    if n > MAX_EQUIPES_MATRICE:
+        return f"(Matrice non affichée : {n} équipes, c'est trop large.)"
+
+    rr = tournoi.get("rr_iterations")
+    titre = "Confrontations — victoires de la ligne sur la colonne"
+    if rr:
+        titre += f" (sur {rr})"
+
+    lignes = [titre, "    " + "".join(f"{i + 1:>3}" for i in range(n))]
+    for i, a in enumerate(ordre):
+        cellules = ""
+        for j, b in enumerate(ordre):
+            if i == j:
+                cellules += "  ·"
+            else:
+                total = victoires_paire[(a, b)] + victoires_paire[(b, a)]
+                cellules += "  -" if total == 0 else f"{victoires_paire[(a, b)]:>3}"
+        lignes.append(f"{i + 1:>2}  {cellules}")
+
+    lignes.append("")
+    for i, a in enumerate(ordre):
+        lignes.append(f"{i + 1:>2}. {nom_par_pid[a]}")
+
+    return "\n".join(lignes)
+
+
+def construire_embed_matrice(tournoi, classement):
+    """Construit l'embed Discord de la matrice des confrontations, ou None."""
+    texte = construire_matrice_texte(tournoi, classement)
+    if not texte:
+        return None
+
+    description = f"```\n{texte}\n```"
+    if len(description) > 4000:
+        description = description[:3990] + "\n…```"
+
+    return {
+        "title": "Confrontations directes",
+        "description": description,
+        "color": COULEUR_EMBED,
+    }
+
+
 def _lire_message_id(chemin):
     """Lit l'identifiant du message Discord mémorisé, ou None s'il n'existe pas."""
     try:
@@ -343,7 +438,7 @@ def _ecrire_message_id(chemin, message_id):
         print(f"AVERTISSEMENT : impossible d'écrire {chemin} ({exc}).", file=sys.stderr)
 
 
-def publier_ou_mettre_a_jour(webhook_url, embed, chemin_etat=CHEMIN_ETAT):
+def publier_ou_mettre_a_jour(webhook_url, embeds, chemin_etat=CHEMIN_ETAT):
     """Met à jour le message Discord existant, ou en crée un et mémorise son id.
 
     Au premier passage (aucun identifiant connu), un message est créé et son
@@ -355,12 +450,12 @@ def publier_ou_mettre_a_jour(webhook_url, embed, chemin_etat=CHEMIN_ETAT):
     ----------
     webhook_url : str
         URL de la webhook Discord.
-    embed : dict
-        Objet embed à publier.
+    embeds : list[dict]
+        Liste d'objets embed à publier (classement, matrice, …).
     chemin_etat : str
         Chemin du fichier mémorisant l'identifiant du message.
     """
-    payload = {"embeds": [embed]}
+    payload = {"embeds": embeds}
     message_id = _lire_message_id(chemin_etat)
 
     # 1) Tentative de modification du message existant.
@@ -416,7 +511,11 @@ def main():
     tournoi = recuperer_tournoi(slug, username, api_key)
     classement = construire_classement(tournoi)
     embed = construire_embed(tournoi, classement)
-    publier_ou_mettre_a_jour(webhook, embed)
+    embeds = [embed]
+    embed_matrice = construire_embed_matrice(tournoi, classement)
+    if embed_matrice:
+        embeds.append(embed_matrice)
+    publier_ou_mettre_a_jour(webhook, embeds)
 
 
 if __name__ == "__main__":
